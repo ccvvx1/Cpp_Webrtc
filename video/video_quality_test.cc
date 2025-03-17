@@ -311,7 +311,7 @@ class QualityTestVideoEncoder : public VideoEncoder,
 
 #if defined(WEBRTC_WIN) && !defined(WINUWP)
 void PressEnterToContinue(TaskQueueBase* task_queue) {
-  puts(">> Press ENTER to continue...");
+  puts(">> Press ENTER to continue2...");
 
   while (!_kbhit() || _getch() != '\r') {
     // Drive the message loop for the thread running the task_queue
@@ -326,7 +326,7 @@ void PressEnterToContinue(TaskQueueBase* task_queue) {
 }
 #else
 void PressEnterToContinue(TaskQueueBase* /*task_queue*/) {
-  puts(">> Press ENTER to continue...");
+  puts(">> Press ENTER to continue1...");
   while (getc(stdin) != '\n' && !feof(stdin))
     ;  // NOLINT
 }
