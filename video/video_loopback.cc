@@ -357,6 +357,7 @@ std::string Clip() {
 }  // namespace
 
 void Loopback() {
+  printf("======================= hello =========================\n");
   BuiltInNetworkBehaviorConfig pipe_config;
   pipe_config.loss_percent = LossPercent();
   pipe_config.avg_burst_loss_length = AvgBurstLossLength();
