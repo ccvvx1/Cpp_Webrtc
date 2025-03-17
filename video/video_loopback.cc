@@ -355,29 +355,78 @@ std::string Clip() {
 }
 
 }  // namespace
-
 void Loopback() {
-  printf("======================= hello =========================\n");
+  printf("======================= 开始网络回环测试 =========================\n");
+  
+  // 网络管道配置
+  printf("[配置] 初始化网络行为参数...\n");
   BuiltInNetworkBehaviorConfig pipe_config;
   pipe_config.loss_percent = LossPercent();
+  printf("  丢包率: %.2f%%\n", pipe_config.loss_percent);
   pipe_config.avg_burst_loss_length = AvgBurstLossLength();
+  printf("  平均突发丢包长度: %d 包\n", pipe_config.avg_burst_loss_length);
   pipe_config.link_capacity = LinkCapacity();
+  // printf("  链路容量: %.2f Mbps\n", pipe_config.link_capacity / 1e6);
   pipe_config.queue_length_packets = QueueSize();
+  // printf("  队列长度: %d 包\n", pipe_config.queue_length_packets);
   pipe_config.queue_delay_ms = AvgPropagationDelayMs();
+  printf("  平均队列延迟: %d ms\n", pipe_config.queue_delay_ms);
   pipe_config.delay_standard_deviation_ms = StdPropagationDelayMs();
+  printf("  延迟标准差: %d ms\n", pipe_config.delay_standard_deviation_ms);
   pipe_config.allow_reordering = absl::GetFlag(FLAGS_allow_reordering);
+  printf("  允许乱序: %s\n", pipe_config.allow_reordering ? "是" : "否");
+  printf("[配置] 网络行为参数初始化完成\n\n");
 
+  // 呼叫比特率配置
+  printf("[配置] 设置呼叫比特率参数...\n");
   BitrateConstraints call_bitrate_config;
   call_bitrate_config.min_bitrate_bps = MinBitrateKbps() * 1000;
+  printf("  最小比特率: %d Kbps\n", call_bitrate_config.min_bitrate_bps / 1000);
   call_bitrate_config.start_bitrate_bps = StartBitrateKbps() * 1000;
-  call_bitrate_config.max_bitrate_bps = -1;  // Don't cap bandwidth estimate.
+  printf("  起始比特率: %d Kbps\n", call_bitrate_config.start_bitrate_bps / 1000);
+  call_bitrate_config.max_bitrate_bps = -1;  // 不限制带宽估计
+  printf("  最大比特率: 无限制\n");
+  printf("[配置] 比特率参数设置完成\n\n");
 
+  // 主测试参数配置
+  printf("[配置] 初始化视频质量测试参数...\n");
   VideoQualityTest::Params params;
+  
+  // 呼叫配置
   params.call.send_side_bwe = absl::GetFlag(FLAGS_send_side_bwe);
+  printf("  发送端带宽估计: %s\n", params.call.send_side_bwe ? "启用" : "禁用");
   params.call.generic_descriptor = absl::GetFlag(FLAGS_generic_descriptor);
-  params.call.dependency_descriptor =
-      absl::GetFlag(FLAGS_dependency_descriptor);
+  printf("  通用描述符: %s\n", params.call.generic_descriptor ? "启用" : "禁用");
+  params.call.dependency_descriptor = absl::GetFlag(FLAGS_dependency_descriptor);
+  printf("  依赖描述符: %s\n", params.call.dependency_descriptor ? "启用" : "禁用");
   params.call.call_bitrate_config = call_bitrate_config;
+  printf("  呼叫比特率配置已绑定\n");
+
+  // 视频配置
+  printf("\n[视频] 配置视频流参数...\n");
+  params.video[0].enabled = absl::GetFlag(FLAGS_video);
+  printf("  视频流启用: %s\n", params.video[0].enabled ? "是" : "否");
+  if (params.video[0].enabled) {
+    params.video[0].width = Width();
+    params.video[0].height = Height();
+    // printf("  分辨率: %dx%d\n", params.video[0].width, params.video[0].height);
+    params.video[0].fps = Fps();
+    printf("  帧率: %d FPS\n", params.video[0].fps);
+    // printf("  比特率范围: %d Kbps \~ %d Kbps\n", 
+    //        params.video[0].min_bitrate_bps / 1000, 
+    //        params.video[0].max_bitrate_bps / 1000);
+    params.video[0].suspend_below_min_bitrate = absl::GetFlag(FLAGS_suspend_below_min_bitrate);
+    printf("  低于最小比特率暂停: %s\n", params.video[0].suspend_below_min_bitrate ? "是" : "否");
+    params.video[0].codec = Codec();
+    printf("  编解码器: %s\n", params.video[0].codec.c_str());
+    params.video[0].num_temporal_layers = NumTemporalLayers();
+    printf("  时间层数: %d\n", params.video[0].num_temporal_layers);
+    params.video[0].ulpfec = absl::GetFlag(FLAGS_use_ulpfec);
+    printf("  ULPFEC 纠错: %s\n", params.video[0].ulpfec ? "启用" : "禁用");
+    params.video[0].flexfec = absl::GetFlag(FLAGS_use_flexfec);
+    printf("  FlexFEC 纠错: %s\n", params.video[0].flexfec ? "启用" : "禁用");
+  }
+  printf("[视频] 参数配置完成\n\n");
 
   params.video[0].enabled = absl::GetFlag(FLAGS_video);
   params.video[0].width = Width();
@@ -397,42 +446,105 @@ void Loopback() {
   params.video[0].automatic_scaling = NumStreams() < 2;
   params.video[0].clip_path = Clip();
   params.video[0].capture_device_index = GetCaptureDevice();
+  // 音频配置
+  printf("[音频] 配置音频流参数...\n");
   params.audio.enabled = absl::GetFlag(FLAGS_audio);
-  params.audio.sync_video = absl::GetFlag(FLAGS_audio_video_sync);
-  params.audio.dtx = absl::GetFlag(FLAGS_audio_dtx);
-  params.audio.use_real_adm = absl::GetFlag(FLAGS_use_real_adm);
-  params.logging.rtc_event_log_name = RtcEventLogName();
-  params.logging.rtp_dump_name = RtpDumpName();
-  params.logging.encoded_frame_base_path = EncodedFramePath();
-  params.screenshare[0].enabled = false;
-  params.analyzer.test_label = "video";
-  params.analyzer.test_durations_secs = DurationSecs();
-  params.analyzer.graph_data_output_filename = OutputFilename();
-  params.analyzer.graph_title = GraphTitle();
-  params.config = pipe_config;
+  printf("  音频流启用: %s\n", params.audio.enabled ? "是" : "否");
+  if (params.audio.enabled) {
+    params.audio.sync_video = absl::GetFlag(FLAGS_audio_video_sync);
+    printf("  音视频同步: %s\n", params.audio.sync_video ? "启用" : "禁用");
+    params.audio.dtx = absl::GetFlag(FLAGS_audio_dtx);
+    printf("  不连续传输 (DTX): %s\n", params.audio.dtx ? "启用" : "禁用");
+    params.audio.use_real_adm = absl::GetFlag(FLAGS_use_real_adm);
+    printf("  使用真实音频设备: %s\n", params.audio.use_real_adm ? "是" : "否");
+  }
+  printf("[音频] 参数配置完成\n\n");
 
+  // 日志与诊断配置
+  printf("[日志] 配置诊断输出...\n");
+  params.logging.rtc_event_log_name = RtcEventLogName();
+  printf("  RTC 事件日志文件: %s\n", params.logging.rtc_event_log_name.c_str());
+  params.logging.rtp_dump_name = RtpDumpName();
+  printf("  RTP 数据包转储文件: %s\n", params.logging.rtp_dump_name.c_str());
+  params.logging.encoded_frame_base_path = EncodedFramePath();
+  printf("  编码帧存储路径: %s\n", params.logging.encoded_frame_base_path.c_str());
+  printf("[日志] 配置完成\n\n");
+
+  // 测试分析器配置
+  printf("[分析器] 初始化测试分析参数...\n");
+  params.analyzer.test_label = "video";
+  printf("  测试标签: %s\n", params.analyzer.test_label.c_str());
+  params.analyzer.test_durations_secs = DurationSecs();
+  printf("  测试持续时间: %d 秒\n", params.analyzer.test_durations_secs);
+  params.analyzer.graph_data_output_filename = OutputFilename();
+  printf("  图表数据输出文件: %s\n", params.analyzer.graph_data_output_filename.c_str());
+  params.analyzer.graph_title = GraphTitle();
+  printf("  图表标题: %s\n", params.analyzer.graph_title.c_str());
+  printf("[分析器] 配置完成\n\n");
+
+  // 最终配置绑定
+  printf("[系统] 绑定网络管道配置...\n");
+  params.config = pipe_config;
+  printf("======================= 配置完成，准备启动测试 =========================\n");
+  // 流推断逻辑
+  printf("\n[流推断] 检查流推断条件...\n");
+  printf("  当前流数量: %d\n", NumStreams());
+  printf("  Stream0 内容: '%s' (长度: %zu)\n", Stream0().c_str(), Stream0().size());
+  printf("  Stream1 内容: '%s' (长度: %zu)\n", Stream1().c_str(), Stream1().size());
+  
   if (NumStreams() > 1 && Stream0().empty() && Stream1().empty()) {
+    printf("  满足流推断条件，启用自动流推断\n");
     params.ss[0].infer_streams = true;
+  } else {
+    printf("  不满足流推断条件，跳过自动推断\n");
   }
 
+  // 流描述符配置
+  printf("\n[流配置] 初始化流描述符...\n");
   std::vector<std::string> stream_descriptors;
   stream_descriptors.push_back(Stream0());
   stream_descriptors.push_back(Stream1());
+  printf("  已添加流描述符: \n");
+  for (const auto& desc : stream_descriptors) {
+    printf("    - %s\n", desc.empty() ? "<空>" : desc.c_str());
+  }
+
+  // 空间层描述符配置
+  printf("\n[空间层] 初始化空间层描述符...\n");
   std::vector<std::string> SL_descriptors;
   SL_descriptors.push_back(SL0());
   SL_descriptors.push_back(SL1());
   SL_descriptors.push_back(SL2());
+  printf("  已添加空间层描述符: \n");
+  for (size_t i = 0; i < SL_descriptors.size(); ++i) {
+    printf("    SL%d: %s\n", static_cast<int>(i), 
+           SL_descriptors[i].empty() ? "<未配置>" : SL_descriptors[i].c_str());
+  }
 
+  // 可伸缩性配置
+  printf("\n[可伸缩性] 填充参数到 VideoQualityTest...\n");
   VideoQualityTest fixture(nullptr);
+  printf("  流数量: %d\n  选定流索引: %d\n  空间层数: %d\n  选定空间层: %d\n",
+         NumStreams(), SelectedStream(), NumSpatialLayers(), SelectedSL());
+  // printf("  层间预测模式: %s\n", InterLayerPred().c_str());
+  
   fixture.FillScalabilitySettings(
       &params, 0, stream_descriptors, NumStreams(), SelectedStream(),
       NumSpatialLayers(), SelectedSL(), InterLayerPred(), SL_descriptors);
+  printf("  可伸缩性配置完成\n");
 
+  // 测试执行分支
+  printf("\n[执行] 选择测试运行模式...\n");
   if (DurationSecs()) {
+    printf("  使用分析器模式运行，持续时间: %d 秒\n", DurationSecs());
+    printf("  输出文件: %s\n", params.analyzer.graph_data_output_filename.c_str());
     fixture.RunWithAnalyzer(params);
   } else {
+    printf("  使用渲染器模式运行（无时间限制）\n");
     fixture.RunWithRenderers(params);
   }
+  printf("======================= 测试启动完成 =========================\n");
+
 }
 
 int RunLoopbackTest(int argc, char* argv[]) {
