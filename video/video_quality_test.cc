@@ -1466,115 +1466,212 @@ void VideoQualityTest::SetupAudio(Transport* transport) {
 }
 
 void VideoQualityTest::RunWithRenderers(const Params& params) {
-  RTC_LOG(LS_INFO) << __FUNCTION__;
+  printf("\n======================= 启动渲染器模式 =========================\n");
+  
+  // 视频流数量配置
+  printf("[配置] 设置视频流参数...\n");
   num_video_streams_ = params.call.dual_video ? 2 : 1;
+  printf("  双视频流模式: %s\n", params.call.dual_video ? "启用" : "禁用");
+  // printf("  总视频流数量: %d\n", num_video_streams_);
+
+  // 初始化传输层和渲染器
+  printf("\n[初始化] 创建传输层和渲染器对象...\n");
   std::unique_ptr<test::LayerFilteringTransport> send_transport;
   std::unique_ptr<test::DirectTransport> recv_transport;
   std::unique_ptr<test::VideoRenderer> local_preview;
   std::vector<std::unique_ptr<test::VideoRenderer>> loopback_renderers;
+  printf("  传输层对象创建完成 (LayerFilteringTransport/DirectTransport)\n");
+  printf("  本地预览渲染器和回环渲染器队列已初始化\n");
 
+  // 事件日志配置
   if (!params.logging.rtc_event_log_name.empty()) {
-    std::unique_ptr<RtcEventLog> send_event_log =
-        rtc_event_log_factory_.Create(env());
-    std::unique_ptr<RtcEventLog> recv_event_log =
-        rtc_event_log_factory_.Create(env());
-    std::unique_ptr<RtcEventLogOutputFile> send_output(
-        std::make_unique<RtcEventLogOutputFile>(
-            params.logging.rtc_event_log_name + "_send",
-            RtcEventLog::kUnlimitedOutput));
-    std::unique_ptr<RtcEventLogOutputFile> recv_output(
-        std::make_unique<RtcEventLogOutputFile>(
-            params.logging.rtc_event_log_name + "_recv",
-            RtcEventLog::kUnlimitedOutput));
-    bool event_log_started =
-        send_event_log->StartLogging(std::move(send_output),
-                                     /*output_period_ms=*/5000) &&
-        recv_event_log->StartLogging(std::move(recv_output),
-                                     /*output_period_ms=*/5000);
-    RTC_DCHECK(event_log_started);
-    SetSendEventLog(std::move(send_event_log));
-    SetRecvEventLog(std::move(recv_event_log));
+    printf("\n[日志] 配置 RTC 事件日志记录...\n");
+    const std::string send_log_path = params.logging.rtc_event_log_name + "_send";
+    const std::string recv_log_path = params.logging.rtc_event_log_name + "_recv";
+    printf("  发送日志文件: %s\n", send_log_path.c_str());
+    printf("  接收日志文件: %s\n", recv_log_path.c_str());
+
+    // 创建日志对象
+    std::unique_ptr<RtcEventLog> send_event_log = rtc_event_log_factory_.Create(env());
+    std::unique_ptr<RtcEventLog> recv_event_log = rtc_event_log_factory_.Create(env());
+    printf("  日志对象创建完成\n");
+
+    // 启动日志记录
+    printf("  尝试启动日志记录 (输出间隔: 5000 ms)...\n");
+    bool send_log_started = send_event_log->StartLogging(
+        std::make_unique<RtcEventLogOutputFile>(send_log_path, RtcEventLog::kUnlimitedOutput),
+        5000
+    );
+    bool recv_log_started = recv_event_log->StartLogging(
+        std::make_unique<RtcEventLogOutputFile>(recv_log_path, RtcEventLog::kUnlimitedOutput),
+        5000
+    );
+    const bool event_log_started = send_log_started && recv_log_started;
+    
+    if (event_log_started) {
+      printf("  日志记录已成功启动\n");
+      SetSendEventLog(std::move(send_event_log));
+      SetRecvEventLog(std::move(recv_event_log));
+    } else {
+      printf("  警告：日志记录启动失败！\n");
+      printf("  发送日志状态: %s\n", send_log_started ? "成功" : "失败");
+      printf("  接收日志状态: %s\n", recv_log_started ? "成功" : "失败");
+      RTC_DCHECK(false); // 触发调试断言
+    }
+  } else {
+    printf("\n[日志] 未配置 RTC 事件日志记录\n");
   }
 
+  // 后续代码（传输层和渲染器初始化、测试启动等）
+  printf("\n[执行] 进入视频传输主循环...\n");
+
+
+
   SendTask(task_queue(), [&]() {
+    printf("\n[参数配置] 开始初始化测试参数...\n");
     params_ = params;
+    // printf("  参数已加载，视频流数量: %d\n", params_.video.size());
+    
+    printf("[参数检查] 启动参数与注入组件校验...\n");
     CheckParamsAndInjectionComponents();
+    printf("  参数校验完成，无致命错误\n");
 
-    // TODO(ivica): Remove bitrate_config and use the default CallConfig(), to
-    // match the full stack tests.
+    printf("\n[呼叫配置] 构建发送/接收呼叫配置...\n");
     CallConfig send_call_config = SendCallConfig();
+    // printf("  发送端默认配置加载完成 (流控算法: %s)\n", 
+    //       send_call_config.bitrate_config.ToString().c_str());
+    
     send_call_config.bitrate_config = params_.call.call_bitrate_config;
+    printf("  更新发送端带宽配置 -> 最小: %d Kbps, 起始: %d Kbps\n",
+          send_call_config.bitrate_config.min_bitrate_bps / 1000,
+          send_call_config.bitrate_config.start_bitrate_bps / 1000);
+
     CallConfig recv_call_config = RecvCallConfig();
+    printf("  接收端默认配置加载完成\n");
 
-    if (params_.audio.enabled)
-      InitializeAudioDevice(&send_call_config, &recv_call_config,
+    printf("\n[音频设备] 初始化音频模块...\n");
+    if (params_.audio.enabled) {
+        printf("  音频已启用，使用设备类型: %s\n", 
+              params_.audio.use_real_adm ? "真实设备" : "虚拟设备");
+        InitializeAudioDevice(&send_call_config, &recv_call_config,
                             params_.audio.use_real_adm);
+        printf("  音频设备初始化完成\n");
+    } else {
+        printf("  音频未启用，跳过初始化\n");
+    }
 
+    printf("\n[呼叫实例] 创建发送/接收呼叫对象...\n");
     CreateCalls(std::move(send_call_config), std::move(recv_call_config));
+    printf("  呼叫实例创建完成 (SenderCall: %p, ReceiverCall: %p)\n",
+          static_cast<void*>(sender_call_.get()),
+          static_cast<void*>(receiver_call_.get()));
 
-    // TODO(minyue): consider if this is a good transport even for audio only
-    // calls.
+    printf("\n[传输层] 构建网络传输通道...\n");
+    printf("  创建发送端传输层 (LayerFilteringTransport)...\n");
     send_transport = CreateSendTransport();
-
+    printf("  发送端传输层地址: %p\n", static_cast<void*>(send_transport.get()));
+    
+    printf("  创建接收端传输层 (DirectTransport)...\n");
     recv_transport = CreateReceiveTransport();
+    printf("  接收端传输层地址: %p\n", static_cast<void*>(recv_transport.get()));
 
-    // TODO(ivica): Use two calls to be able to merge with RunWithAnalyzer or at
-    // least share as much code as possible. That way this test would also match
-    // the full stack tests better.
+    printf("\n[路由设置] 配置传输层接收目标...\n");
+    printf("  发送端传输层绑定到接收端呼叫 (地址: %p)\n", 
+          static_cast<void*>(receiver_call_->Receiver()));
     send_transport->SetReceiver(receiver_call_->Receiver());
+    
+    printf("  接收端传输层绑定到发送端呼叫 (地址: %p)\n",
+          static_cast<void*>(sender_call_->Receiver()));
     recv_transport->SetReceiver(sender_call_->Receiver());
+    printf("  双向传输路由配置完成\n");
+    printf("======================================================\n");
+
 
     if (params_.video[0].enabled) {
-      // Create video renderers.
+      printf("\n[视频处理] 开始配置视频渲染器...\n");
       SetupVideo(send_transport.get(), recv_transport.get());
+      printf("  视频传输层初始化完成\n");
+
       size_t num_streams_processed = 0;
       for (size_t video_idx = 0; video_idx < num_video_streams_; ++video_idx) {
+        printf("\n  处理第 %zu/%d 个视频流...\n", video_idx+1, num_video_streams_);
+        
         const size_t selected_stream_id = params_.ss[video_idx].selected_stream;
         const size_t num_streams = params_.ss[video_idx].streams.size();
+        printf("    当前流配置: 可选流数=%zu, 选定流ID=%zu\n", num_streams, selected_stream_id);
+
         if (selected_stream_id == num_streams) {
+          printf("    模式：全流处理（渲染所有 %zu 个流）\n", num_streams);
           for (size_t stream_id = 0; stream_id < num_streams; ++stream_id) {
             rtc::StringBuilder oss;
-            oss << "Loopback Video #" << video_idx << " - Stream #"
-                << static_cast<int>(stream_id);
+            oss << "Loopback Video #" << video_idx << " - Stream #" << stream_id;
+            printf("    正在创建渲染器 [%s] 分辨率: %dx%d\n", 
+                   oss.str().c_str(),
+                   params_.ss[video_idx].streams[stream_id].width,
+                   params_.ss[video_idx].streams[stream_id].height);
+
             loopback_renderers.emplace_back(test::VideoRenderer::Create(
                 oss.str().c_str(),
                 params_.ss[video_idx].streams[stream_id].width,
                 params_.ss[video_idx].streams[stream_id].height));
-            video_receive_configs_[stream_id + num_streams_processed].renderer =
-                loopback_renderers.back().get();
-            if (params_.audio.enabled && params_.audio.sync_video)
-              video_receive_configs_[stream_id + num_streams_processed]
-                  .sync_group = kSyncGroup;
+            
+            const size_t config_index = stream_id + num_streams_processed;
+            video_receive_configs_[config_index].renderer = loopback_renderers.back().get();
+            printf("    渲染器绑定到接收配置[%zu]\n", config_index);
+
+            if (params_.audio.enabled && params_.audio.sync_video) {
+              video_receive_configs_[config_index].sync_group = kSyncGroup;
+              printf("    启用音视频同步 (同步组: %s)\n", kSyncGroup);
+            }
           }
         } else {
+          printf("    模式：单流处理（仅渲染选定流 %zu）\n", selected_stream_id);
           rtc::StringBuilder oss;
           oss << "Loopback Video #" << video_idx;
+          printf("    正在创建渲染器 [%s] 分辨率: %dx%d\n", 
+                 oss.str().c_str(),
+                 params_.ss[video_idx].streams[selected_stream_id].width,
+                 params_.ss[video_idx].streams[selected_stream_id].height);
+
           loopback_renderers.emplace_back(test::VideoRenderer::Create(
               oss.str().c_str(),
               params_.ss[video_idx].streams[selected_stream_id].width,
               params_.ss[video_idx].streams[selected_stream_id].height));
-          video_receive_configs_[selected_stream_id + num_streams_processed]
-              .renderer = loopback_renderers.back().get();
-          if (params_.audio.enabled && params_.audio.sync_video)
-            video_receive_configs_[num_streams_processed + selected_stream_id]
-                .sync_group = kSyncGroup;
+          
+          const size_t config_index = selected_stream_id + num_streams_processed;
+          video_receive_configs_[config_index].renderer = loopback_renderers.back().get();
+          printf("    渲染器绑定到接收配置[%zu]\n", config_index);
+
+          if (params_.audio.enabled && params_.audio.sync_video) {
+            video_receive_configs_[config_index].sync_group = kSyncGroup;
+            printf("    启用音视频同步 (同步组: %s)\n", kSyncGroup);
+          }
         }
         num_streams_processed += num_streams;
+        printf("    累计处理流数: %zu\n", num_streams_processed);
       }
-      CreateFlexfecStreams();
-      CreateVideoStreams();
 
+      printf("\n[流保护] 创建FlexFEC抗丢包流...\n");
+      CreateFlexfecStreams();
+      printf("[流管理] 创建视频流管道...\n");
+      CreateVideoStreams();
+      printf("[采集] 初始化视频捕获设备...\n");
       CreateCapturers();
+
       if (params_.video[0].enabled) {
-        // Create local preview
+        printf("\n[本地预览] 创建本地视频预览...\n");
+        printf("  分辨率: %dx%d\n", params_.video[0].width, params_.video[0].height);
         local_preview.reset(test::VideoRenderer::Create(
             "Local Preview", params_.video[0].width, params_.video[0].height));
-
-        video_sources_[0]->AddOrUpdateSink(local_preview.get(),
-                                           rtc::VideoSinkWants());
+        video_sources_[0]->AddOrUpdateSink(local_preview.get(), rtc::VideoSinkWants());
+        printf("  预览渲染器已连接至视频源\n");
       }
+
+      printf("\n[连接] 绑定视频源到流管道...\n");
       ConnectVideoSourcesToStreams();
+      printf("======================================================\n");
     }
+
 
     if (params_.audio.enabled) {
       SetupAudio(send_transport.get());
