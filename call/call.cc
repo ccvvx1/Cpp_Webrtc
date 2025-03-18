@@ -923,66 +923,233 @@ void Call::DestroyAudioReceiveStream(
   delete audio_receive_stream;
 }
 
+
 // This method can be used for Call tests with external fec controller factory.
 webrtc::VideoSendStream* Call::CreateVideoSendStream(
     webrtc::VideoSendStream::Config config,
     VideoEncoderConfig encoder_config,
     std::unique_ptr<FecController> fec_controller) {
   TRACE_EVENT0("webrtc", "Call::CreateVideoSendStream");
+  printf("\n============== 开始创建视频发送流核心流程 ==============\n");
+  
+  // 线程安全验证
+  printf("[线程安全] 当前执行线程验证\n");
   RTC_DCHECK_RUN_ON(worker_thread_);
+  printf("  ✅ 线程校验通过（worker_thread_）\n");
 
+  // 资源初始化
+  printf("\n[资源配置] 初始化基础模块\n");
   EnsureStarted();
+  printf("  ✅ 基础资源初始化完成\n");
 
+  // 延迟统计配置
+  printf("\n[延迟监控] 配置SSRC统计项 | 数量：%zu\n", config.rtp.ssrcs.size());
   video_send_delay_stats_->AddSsrcs(config);
-  for (size_t ssrc_index = 0; ssrc_index < config.rtp.ssrcs.size();
-       ++ssrc_index) {
-    env_.event_log().Log(std::make_unique<RtcEventVideoSendStreamConfig>(
-        CreateRtcLogStreamConfig(config, ssrc_index)));
+  printf("  配置SSRC列表：");
+  for (auto&& ssrc : config.rtp.ssrcs) {
+    printf("%X ", ssrc);  // 十六进制显示更符合网络调试习惯
+  }
+  printf("\n");
+
+  // 事件日志记录
+  printf("\n[事件日志] 记录流配置（按SSRC索引）\n");
+  for (size_t ssrc_index = 0; ssrc_index < config.rtp.ssrcs.size(); ++ssrc_index) {
+    printf("  处理索引[%zu/%zu]：\n", ssrc_index+1, config.rtp.ssrcs.size());
+    
+    // auto log_config = CreateRtcLogStreamConfig(config, ssrc_index);
+    printf("    📝 事件类型：VideoSendStreamConfig\n");
+    // printf("    📌 远程SSRC：%X\n", log_config.remote_ssrc);
+    // printf("    ⏱️ 时间戳扩展ID：%d\n", log_config.rtp_timestamp_extensions_id);
+    
+    env_.event_log().Log(std::make_unique<RtcEventVideoSendStreamConfig>(CreateRtcLogStreamConfig(config, ssrc_index)));
+    printf("    ✅ 日志记录成功\n");
   }
 
-  // TODO(mflodman): Base the start bitrate on a current bandwidth estimate, if
-  // the call has already started.
-  // Copy ssrcs from `config` since `config` is moved.
+  // SSRC备份（移动语义前的保护）
+  printf("\n[数据备份] 克隆SSRC列表\n");
   std::vector<uint32_t> ssrcs = config.rtp.ssrcs;
+  printf("  已备份%zu个SSRC：", ssrcs.size());
+  for (auto&& s : ssrcs) printf("%X ", s);
+  printf("\n");
 
+  // 流对象实例化
+  printf("\n[对象创建] 初始化VideoSendStreamImpl\n");
+  printf("  关键配置参数：\n");
+  // printf("  🖥️  编码类型：%s\n", encoder_config.encoder_type.c_str());
+  // printf("  🖼️  分辨率：%dx%d\n", encoder_config.video_format.width, encoder_config.video_format.height);
+  printf("  📡  传输通道：%p\n", static_cast<void*>(transport_send_.get()));
+  printf("  ⚙️  FEC控制器：%s\n", fec_controller ? "已启用" : "未启用");
+  
   VideoSendStreamImpl* send_stream = new VideoSendStreamImpl(
       env_, num_cpu_cores_, call_stats_->AsRtcpRttStats(),
       transport_send_.get(), config_.encode_metronome, bitrate_allocator_.get(),
       video_send_delay_stats_.get(), std::move(config),
       std::move(encoder_config), suspended_video_send_ssrcs_,
       suspended_video_payload_states_, std::move(fec_controller));
+  printf("  🆕 流对象创建成功 | 地址：%p\n", static_cast<void*>(send_stream));
 
+  // SSRC映射管理
+  printf("\n[SSRC映射] 注册流标识符\n");
   for (uint32_t ssrc : ssrcs) {
-    RTC_DCHECK(video_send_ssrcs_.find(ssrc) == video_send_ssrcs_.end());
+    printf("  处理SSRC：%X\n", ssrc);
+    
+    if (video_send_ssrcs_.find(ssrc) != video_send_ssrcs_.end()) {
+      printf("  🚨 严重错误：检测到SSRC冲突！\n");
+      printf("    冲突SSRC：%X\n", ssrc);
+      printf("    已关联流对象：%p\n", static_cast<void*>(video_send_ssrcs_[ssrc]));
+      printf("    新流对象：%p\n", static_cast<void*>(send_stream));
+      RTC_DCHECK(video_send_ssrcs_.find(ssrc) == video_send_ssrcs_.end());
+    }
+    
     video_send_ssrcs_[ssrc] = send_stream;
+    printf("  ✅ 映射成功 | %X -> %p\n", ssrc, static_cast<void*>(send_stream));
   }
+
+  // printf("\n============== 视频流核心创建流程完成 ==============\n");
+
+  // 将流对象加入全局集合
+  printf("\n[集合管理] 注册流对象到视频发送流集合\n");
+  size_t pre_insert_size = video_send_streams_.size();
   video_send_streams_.insert(send_stream);
-  video_send_streams_empty_.store(false, std::memory_order_relaxed);
+  printf("  操作结果：\n");
+  printf("  ✅ 集合大小：%zu -> %zu\n", pre_insert_size, video_send_streams_.size());
+  printf("  流对象存在性检查：%s\n", 
+        (video_send_streams_.count(send_stream) ? "存在" : "缺失"));
 
-  // Forward resources that were previously added to the call to the new stream.
-  for (const auto& resource_forwarder : adaptation_resource_forwarders_) {
-    resource_forwarder->OnCreateVideoSendStream(send_stream);
+  // 更新空状态标志
+  printf("\n[状态标记] 更新空流状态标志\n");
+  bool previous_empty = video_send_streams_empty_.exchange(false, std::memory_order_relaxed);
+  printf("  状态变更：%s -> %s\n", 
+        previous_empty ? "空" : "非空", 
+        "非空");
+  printf("  内存顺序：std::memory_order_relaxed\n");
+
+  // 资源适配器转发
+  printf("\n[资源适配] 同步 %zu 个资源适配器\n", adaptation_resource_forwarders_.size());
+  if (adaptation_resource_forwarders_.empty()) {
+    printf("  ⚠️ 警告：未配置任何资源适配转发器\n");
+  } else {
+    int forwarder_index = 0;
+    for (const auto& resource_forwarder : adaptation_resource_forwarders_) {
+      printf("  处理转发器 [%d/%zu]：\n", ++forwarder_index, adaptation_resource_forwarders_.size());
+      printf("    ┌ 转发器地址：%p\n", static_cast<const void*>(resource_forwarder.get()));
+      printf("    ├ 流对象有效性：%s\n", (send_stream ? "有效" : "空指针"));
+      
+      // const size_t pre_forward_count = resource_forwarder->GetBoundStreamCount();
+      resource_forwarder->OnCreateVideoSendStream(send_stream);
+      // const size_t post_forward_count = resource_forwarder->GetBoundStreamCount();
+      
+      // printf("    ├ 绑定流数量变化：%zu -> %zu\n", pre_forward_count, post_forward_count);
+      // printf("    └ 操作结果：%s\n", (post_forward_count > pre_forward_count) ? "成功" : "未变化");
+    }
   }
 
+  // 网络状态聚合更新
+  printf("\n[网络状态] 执行聚合状态更新\n");
+  const NetworkState previous_network_state = current_aggregate_network_state_;
   UpdateAggregateNetworkState();
+  // printf("  网络状态变更：%s -> %s\n",
+  //       NetworkStateToString(previous_network_state),
+  //       NetworkStateToString(current_aggregate_network_state_));
+  printf("  当前网络状态特征：\n");
+  // printf("  - 带宽预估：%s\n", (current_aggregate_network_state_.bandwidth > 0) ? "有效" : "未知");
+  // printf("  - 延迟状态：%dms\n", current_aggregate_network_state_.rtt_ms);
+
+  printf("\n================ 视频发送流初始化最终阶段完成 ================\n");
 
   return send_stream;
 }
 
+
+
 webrtc::VideoSendStream* Call::CreateVideoSendStream(
     webrtc::VideoSendStream::Config config,
     VideoEncoderConfig encoder_config) {
+  printf("\n==================== 开始创建视频发送流 ====================\n");
+  
+  // 线程安全检查
+  printf("[线程安全] 验证工作线程上下文\n");
   RTC_DCHECK_RUN_ON(worker_thread_);
+  printf("  校验通过，当前运行在worker_thread_线程\n");
+
+  // FEC控制器工厂检查
+  printf("\n[FEC控制] 检查FEC控制器配置\n");
   if (config_.fec_controller_factory) {
+    // printf("  检测到外部FEC控制器工厂 (地址: %p)\n", 
+    //       static_cast<void*>(config_.fec_controller_factory.get()));
     RTC_LOG(LS_INFO) << "External FEC Controller will be used.";
+  } else {
+    printf("  使用默认FEC控制器\n");
   }
-  std::unique_ptr<FecController> fec_controller =
-      config_.fec_controller_factory
-          ? config_.fec_controller_factory->CreateFecController(env_)
-          : std::make_unique<FecControllerDefault>(env_);
-  return CreateVideoSendStream(std::move(config), std::move(encoder_config),
-                               std::move(fec_controller));
+
+  // 创建FEC控制器
+  printf("\n[资源分配] 创建FEC控制器实例\n");
+  std::unique_ptr<FecController> fec_controller;
+  if (config_.fec_controller_factory) {
+    printf("  调用工厂方法创建自定义FEC控制器...\n");
+    fec_controller = config_.fec_controller_factory->CreateFecController(env_);
+    printf("  自定义FEC控制器创建结果: %p\n", static_cast<void*>(fec_controller.get()));
+  } else {
+    printf("  实例化默认FEC控制器...\n");
+    fec_controller = std::make_unique<FecControllerDefault>(env_);
+    printf("  默认FEC控制器地址: %p\n", static_cast<void*>(fec_controller.get()));
+  }
+
+  // 空指针保护
+  if (!fec_controller) {
+    printf("[!!! 致命错误] FEC控制器创建失败\n");
+    printf("可能原因:\n");
+    printf("  - 工厂方法返回空指针\n");
+    printf("  - 内存分配失败\n");
+    return nullptr;
+  }
+
+  // 打印流配置概要
+  printf("\n[配置概要] 视频流参数:\n");
+  // printf("  SSRC: %u\n", config.rtp.ssrc);
+  // printf("  编码器类型: %s\n", encoder_config.encoder_type.c_str());
+  // printf("  分辨率: %dx%d\n", 
+  //       encoder_config.video_format.width,
+  //       encoder_config.video_format.height);
+  // printf("  最大码率: %d kbps\n", config.rtp.max_bitrate_bps / 1000);
+  printf("  重传配置: %s\n", 
+        config.rtp.rtx.ssrcs.empty() ? "未启用" : "已启用");
+
+  // 调用实际创建方法
+  printf("\n[创建过程] 调用底层创建方法\n");
+  VideoSendStream* stream = nullptr;
+  // try {
+    stream = CreateVideoSendStream(
+        std::move(config), 
+        std::move(encoder_config),
+        std::move(fec_controller)
+    );
+  // } catch (const std::exception& e) {
+  //   printf("[!!! 异常捕获] 创建过程中抛出异常: %s\n", e.what());
+  //   printf("堆栈跟踪:\n");
+  //   // PrintStackTrace(); // 需实现堆栈打印函数
+  //   return nullptr;
+  // }
+
+  // 校验返回结果
+  if (!stream) {
+    printf("[!!! 错误] 视频流对象创建失败\n");
+    printf("可能原因:\n");
+    printf("  - 编解码器初始化失败\n");
+    printf("  - 网络带宽不足\n");
+    printf("  - SSRC冲突\n");
+    return nullptr;
+  }
+
+  printf("\n[创建成功] 视频流信息:\n");
+  printf("  对象地址: %p\n", static_cast<void*>(stream));
+  printf("  当前帧率: 0 fps (初始状态)\n");
+  printf("  当前码率: 0 kbps (初始状态)\n");
+  printf("======================================================\n");
+
+  return stream;
 }
+
 
 void Call::DestroyVideoSendStream(webrtc::VideoSendStream* send_stream) {
   TRACE_EVENT0("webrtc", "Call::DestroyVideoSendStream");
