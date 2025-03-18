@@ -538,48 +538,213 @@ void CallTest::CreateFakeAudioDevices(
 }
 
 void CallTest::CreateVideoStreams() {
+  printf("\n======================= 开始创建视频流 =======================\n");
+  
+  // 验证接收流容器状态
+  printf("[状态检查] 验证视频接收流容器状态...\n");
+  printf("  video_receive_streams_ 初始容量: %zu\n", video_receive_streams_.size());
   RTC_DCHECK(video_receive_streams_.empty());
+  printf("  校验通过，接收流容器为空\n");
+
+  // 创建视频发送流
+  printf("\n[发送流] 创建视频发送流...\n");
   CreateVideoSendStreams();
-  for (size_t i = 0; i < video_receive_configs_.size(); ++i) {
-    video_receive_streams_.push_back(receiver_call_->CreateVideoReceiveStream(
-        video_receive_configs_[i].Copy()));
+  printf("  发送流创建完成，当前发送流数量: %zu\n", video_send_streams_.size());
+
+  // 遍历接收配置创建接收流
+  const size_t receive_config_count = video_receive_configs_.size();
+  printf("\n[接收流] 开始处理接收配置 | 总配置数: %zu\n", receive_config_count);
+  
+  if (receive_config_count == 0) {
+    printf("[WARNING] 未找到任何视频接收配置，跳过创建流程\n");
+    return;
   }
+
+  for (size_t i = 0; i < receive_config_count; ++i) {
+    printf("\n--- 处理接收配置 [%zu/%zu] ---\n", i+1, receive_config_count);
+    
+    // 打印关键配置参数（假设 VideoReceiveStream::Config 包含以下字段）
+    const VideoReceiveStreamInterface::Config& config = video_receive_configs_[i];
+    // webrtc::VideoReceiveStreamInterface::Config
+    printf("配置参数:\n");
+    printf("  接收SSRC: %u\n", config.rtp.remote_ssrc);
+    printf("  本地SSRC: %u\n", config.rtp.local_ssrc);
+    printf("  解码器数量: %zu\n", config.decoders.size());
+    printf("  渲染器指针: %p\n", static_cast<void*>(config.renderer));
+    printf("  同步组: %s\n", config.sync_group.empty() ? "未配置" : config.sync_group.c_str());
+
+    // 创建视频接收流
+    printf("创建视频接收流对象...\n");
+    VideoReceiveStreamInterface* stream = receiver_call_->CreateVideoReceiveStream(config.Copy());
+    
+    // 校验流对象状态
+    if (!stream) {
+      printf("[ERROR] 创建失败！配置索引: %zu | 可能原因：\n", i);
+      printf("         - 无效的SSRC配置\n");
+      printf("         - 解码器参数错误\n");
+      printf("         - 资源分配失败\n");
+      continue;
+    }
+
+    // 记录成功状态
+    printf("创建成功 | 对象地址: %p\n", static_cast<void*>(stream));
+    video_receive_streams_.push_back(stream);
+    printf("当前接收流总数: %zu\n", video_receive_streams_.size());
+  }
+
+  printf("\n[结果汇总] 视频流创建完成\n");
+  printf("  发送流数量: %zu | 接收流数量: %zu\n",
+         video_send_streams_.size(),
+         video_receive_streams_.size());
+  printf("========================================================\n");
 }
 
-void CallTest::CreateVideoSendStreams() {
-  RTC_DCHECK(video_send_streams_.empty());
 
-  // We currently only support testing external fec controllers with a single
-  // VideoSendStream.
+void CallTest::CreateVideoSendStreams() {
+  printf("\n==================== 开始创建视频发送流 ====================\n");
+  
+  // 检查发送流容器状态
+  printf("[状态检查] 验证视频发送流容器状态\n");
+  printf("当前video_send_streams_大小: %zu\n", video_send_streams_.size());
+  RTC_DCHECK(video_send_streams_.empty());
+  printf("校验通过，发送流容器为空\n");
+
+  // FEC控制器特殊处理
+  printf("\n[FEC控制] 检查FEC控制器配置\n");
   if (fec_controller_factory_.get()) {
+    printf("检测到FEC控制器工厂（地址: %p）\n", 
+          static_cast<void*>(fec_controller_factory_.get()));
+    printf("当前视频发送配置数量: %zu\n", video_send_configs_.size());
     RTC_DCHECK_LE(video_send_configs_.size(), 1);
+    printf("配置数量校验通过（<=1）\n");
+  } else {
+    printf("未配置FEC控制器工厂\n");
   }
 
-  // TODO(http://crbug/818127):
-  // Remove this workaround when ALR is not screenshare-specific.
+  // 创建顺序处理
+  printf("\n[创建顺序] 确定流创建顺序\n");
   std::list<size_t> streams_creation_order;
-  for (size_t i = 0; i < video_send_configs_.size(); ++i) {
-    // If dual streams are created, add the screenshare stream last.
-    if (video_encoder_configs_[i].content_type ==
-        VideoEncoderConfig::ContentType::kScreen) {
+  const size_t total_configs = video_send_configs_.size();
+  printf("总发送流配置数: %zu\n", total_configs);
+  
+  for (size_t i = 0; i < total_configs; ++i) {
+    printf("\n处理配置[%zu/%zu]:\n", i+1, total_configs);
+    
+    // 获取编码器配置
+    const VideoEncoderConfig::ContentType content_type = 
+        video_encoder_configs_[i].content_type;
+    printf("内容类型: %s\n", 
+          (content_type == VideoEncoderConfig::ContentType::kScreen) 
+          ? "屏幕共享(kScreen)" : "实时视频(kRealtime)");
+
+    // 决定创建顺序
+    if (content_type == VideoEncoderConfig::ContentType::kScreen) {
       streams_creation_order.push_back(i);
+      printf("添加至创建队列末尾（屏幕共享流最后创建）\n");
     } else {
       streams_creation_order.push_front(i);
+      printf("添加至创建队列头部（实时视频流优先创建）\n");
     }
+    
+    printf("当前创建顺序队列: [ ");
+    for (auto idx : streams_creation_order) {
+      printf("%zu ", idx);
+    }
+    printf("]\n");
   }
 
+  printf("\n最终创建顺序确定:\n");
+  printf("索引顺序 -> [ ");
+  for (auto idx : streams_creation_order) {
+    printf("%zu ", idx);
+  }
+  printf("]\n");
+
+  printf("\n[流创建] 开始创建视频发送流\n");
+  printf("预分配视频发送流容器 | 总容量: %zu\n", video_send_configs_.size());
   video_send_streams_.resize(video_send_configs_.size(), nullptr);
 
+  int success_count = 0;
+  const size_t total_to_create = streams_creation_order.size();
+  printf("需要创建的流总数: %zu\n", total_to_create);
+
+  size_t creation_index = 0;
   for (size_t i : streams_creation_order) {
-    if (fec_controller_factory_.get()) {
-      video_send_streams_[i] = sender_call_->CreateVideoSendStream(
-          video_send_configs_[i].Copy(), video_encoder_configs_[i].Copy(),
-          fec_controller_factory_->CreateFecController(send_env_));
-    } else {
-      video_send_streams_[i] = sender_call_->CreateVideoSendStream(
-          video_send_configs_[i].Copy(), video_encoder_configs_[i].Copy());
+    printf("\n--- 正在创建流 [%zu/%zu] 配置索引: %zu ---\n", 
+          ++creation_index, total_to_create, i);
+    
+    // 打印关键配置参数
+    printf("[配置] 视频发送配置:\n");
+    // printf("  编码器: %s | 起始码率: %d kbps\n",
+    //       video_encoder_configs_[i].encoder_type.c_str(),
+    //       video_send_configs_[i].rtp.max_bitrate_bps / 1000);
+    printf("  SSRC列表: ");
+    for (auto ssrc : video_send_configs_[i].rtp.ssrcs) {
+      printf("%u ", ssrc);
     }
+    printf("\n");
+
+    // 执行创建操作
+    VideoSendStream* stream = nullptr;
+    // try {
+      if (fec_controller_factory_.get()) {
+        printf("[FEC] 使用自定义FEC控制器创建\n");
+        printf("  FEC工厂地址: %p\n", 
+              static_cast<void*>(fec_controller_factory_.get()));
+        
+        // 创建FEC控制器实例
+        printf("  生成FEC控制器...\n");
+        // std::unique_ptr<FecController> fec_controller = 
+        //     fec_controller_factory_->CreateFecController(send_env_);
+        // printf("  FEC控制器实例地址: %p\n", static_cast<void*>(fec_controller));
+        
+        // 创建视频流
+        printf("  调用CreateVideoSendStream (带FEC控制器)...\n");
+        stream = sender_call_->CreateVideoSendStream(
+            video_send_configs_[i].Copy(), 
+            video_encoder_configs_[i].Copy(),
+            fec_controller_factory_->CreateFecController(send_env_));
+      } else {
+        printf("[FEC] 使用默认配置创建\n");
+        printf("  调用CreateVideoSendStream (无FEC控制器)...\n");
+        stream = sender_call_->CreateVideoSendStream(
+            video_send_configs_[i].Copy(),
+            video_encoder_configs_[i].Copy());
+      }
+    // } catch (const std::exception& e) {
+    //   printf("[ERROR] 创建过程中抛出异常: %s\n", e.what());
+    //   continue;
+    // }
+
+    // 校验创建结果
+    if (!stream) {
+      printf("[ERROR] 流对象创建失败！配置索引: %zu\n", i);
+      printf("        可能原因:\n");
+      printf("        - SSRC冲突\n");
+      printf("        - 编码器初始化失败\n");
+      printf("        - 网络资源不足\n");
+      continue;
+    }
+
+    // 记录成功状态
+    video_send_streams_[i] = stream;
+    success_count++;
+    printf("[成功] 流对象地址: %p | 当前成功数: %d/%zu\n",
+          static_cast<void*>(stream), success_count, total_to_create);
   }
+
+  printf("\n[结果汇总] 视频发送流创建完成\n");
+  printf("  总尝试数: %zu | 成功数: %d | 失败数: %zd\n",
+        total_to_create, 
+        success_count,
+        total_to_create - success_count);
+  printf("  最终流容器状态: [");
+  for (auto* s : video_send_streams_) {
+    printf(s ? "✔ " : "✘ ");
+  }
+  printf("]\n");
+  printf("======================================================\n");
+
 }
 
 void CallTest::CreateVideoSendStream(const VideoEncoderConfig& encoder_config) {
@@ -599,11 +764,48 @@ void CallTest::CreateAudioStreams() {
 }
 
 void CallTest::CreateFlexfecStreams() {
-  for (size_t i = 0; i < flexfec_receive_configs_.size(); ++i) {
-    flexfec_receive_streams_.push_back(
-        receiver_call_->CreateFlexfecReceiveStream(
-            flexfec_receive_configs_[i]));
+  const size_t config_count = flexfec_receive_configs_.size();
+  printf("\n[FlexFEC] 开始创建抗丢包接收流 | 配置数量: %zu\n", config_count);
+  
+  if (config_count == 0) {
+    printf("[WARNING] 未配置任何FlexFEC参数，跳过创建流程\n");
+    return;
   }
+
+  for (size_t i = 0; i < config_count; ++i) {
+    printf("\n[流%zu/%zu] 正在处理配置项...\n", i+1, config_count);
+    
+    // 打印关键配置参数（假设FlexFecConfig结构包含payload_type/ssrc等字段）
+    const FlexfecReceiveStream::Config& config = flexfec_receive_configs_[i];
+    printf("  配置参数:\n");
+    printf("    payload_type: %d\n", config.payload_type);
+    // printf("    remote_ssrc:  %u\n", config.remote_ssrc);
+    printf("    protected_media_ssrcs: ");
+    for (auto ssrc : config.protected_media_ssrcs) {
+      printf("%u ", ssrc);
+    }
+    // printf("\n    rtp_header_extensions: %zu 个\n", config.rtp_header_extensions.size());
+
+    // 创建流对象
+    printf("  调用CreateFlexfecReceiveStream...\n");
+    FlexfecReceiveStream* stream = receiver_call_->CreateFlexfecReceiveStream(config);
+    
+    // 校验流对象
+    if (!stream) {
+      printf("[ERROR] 创建失败！配置索引: %zu\n", i);
+      printf("        可能原因：无效参数或资源不足\n");
+      continue;  // 继续尝试创建其他流
+    }
+
+    // 记录创建结果
+    printf("  成功创建流对象 | 地址: %p\n", static_cast<void*>(stream));
+    flexfec_receive_streams_.push_back(stream);
+  }
+
+  printf("\n[FlexFEC] 流程完成 | 总创建数: %zu/%zu\n", 
+         flexfec_receive_streams_.size(), 
+         config_count);
+  printf("============================================================\n");
 }
 
 void CallTest::CreateSendTransport(const BuiltInNetworkBehaviorConfig& config,
