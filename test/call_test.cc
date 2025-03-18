@@ -746,12 +746,82 @@ void CallTest::CreateVideoSendStreams() {
   printf("======================================================\n");
 
 }
-
 void CallTest::CreateVideoSendStream(const VideoEncoderConfig& encoder_config) {
-  RTC_DCHECK(video_send_streams_.empty());
-  video_send_streams_.push_back(sender_call_->CreateVideoSendStream(
-      GetVideoSendConfig()->Copy(), encoder_config.Copy()));
+  printf("\n==================== 开始创建单视频发送流 ====================\n");
+  
+  // 状态预检
+  printf("[状态检查] 验证视频发送流容器状态\n");
+  const size_t existing_streams = video_send_streams_.size();
+  printf("  当前容器大小: %zu | 预期状态: 空\n", existing_streams);
+  RTC_DCHECK(video_send_streams_.empty()) 
+      << "存在未清理的发送流（数量：" << existing_streams << "）";
+  printf("  校验通过，容器为空\n");
+
+  // 获取发送配置
+  printf("\n[配置解析] 加载发送配置参数\n");
+  const  VideoSendStream::Config* send_config = GetVideoSendConfig();
+  if (!send_config) {
+    printf("[!!! 致命错误] 无法获取视频发送配置\n");
+    RTC_DCHECK_NOTREACHED();
+    return;
+  }
+  
+  // 打印发送配置详情
+  printf("发送配置关键参数:\n");
+  printf("  SSRC列表: ");
+  for (const uint32_t ssrc : send_config->rtp.ssrcs) {
+    printf("%u ", ssrc);
+  }
+  printf("\n");
+  // printf("  最大码率: %d kbps\n", send_config->rtp.max_bitrate_bps / 1000);
+  // printf("  加密协议: %s\n", 
+  //       send_config->rtp.crypto_options.ToString().c_str());
+  printf("  RTX配置: %s\n", 
+        (send_config->rtp.rtx.ssrcs.empty() ? "未启用" : "已启用"));
+
+  // 打印编码配置详情
+  printf("\n编码配置关键参数:\n");
+  // printf("  编码器类型: %s\n", encoder_config.encoder_type.c_str());
+  printf("  内容类型: %s\n", 
+        (encoder_config.content_type == VideoEncoderConfig::ContentType::kScreen)
+        ? "屏幕共享" : "实时视频");
+  // printf("  分辨率: %dx%d\n", 
+  //       encoder_config.video_format.width, 
+  //       encoder_config.video_format.height);
+  // printf("  最大帧率: %d fps\n", encoder_config.max_framerate);
+  // printf("  码率配置: 起始 %d kbps, 最大 %d kbps\n",
+  //       encoder_config.bitrate.GetBitrateBps(0, 0) / 1000,
+  //       encoder_config.max_bitrate_bps / 1000);
+
+  // 创建流对象
+  printf("\n[资源分配] 调用底层API创建流\n");
+  VideoSendStream* stream = nullptr;
+  // try {
+    stream = sender_call_->CreateVideoSendStream(
+        send_config->Copy(), 
+        encoder_config.Copy()
+    );
+  // } catch (const std::exception& e) {
+  //   printf("[!!! 异常捕获] 创建过程中发生异常: %s\n", e.what());
+  //   return;
+  // }
+
+  // 校验创建结果
+  if (!stream) {
+    printf("[!!! 错误] 流对象创建失败，可能原因:\n");
+    printf("          - SSRC冲突\n");
+    printf("          - 编码器初始化失败\n");
+    printf("          - 网络资源不足\n");
+    return;
+  }
+
+  // 记录成功状态
+  printf("[创建成功] 流对象地址: %p\n", static_cast<void*>(stream));
+  video_send_streams_.push_back(stream);
+  printf("  当前容器大小: %zu\n", video_send_streams_.size());
+  printf("======================================================\n");
 }
+
 
 void CallTest::CreateAudioStreams() {
   RTC_DCHECK(audio_send_stream_ == nullptr);
