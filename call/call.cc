@@ -1046,7 +1046,7 @@ webrtc::VideoSendStream* Call::CreateVideoSendStream(
 
   // 网络状态聚合更新
   printf("\n[网络状态] 执行聚合状态更新\n");
-  const NetworkState previous_network_state = current_aggregate_network_state_;
+  // const NetworkState previous_network_state = current_aggregate_network_state_;
   UpdateAggregateNetworkState();
   // printf("  网络状态变更：%s -> %s\n",
   //       NetworkStateToString(previous_network_state),
