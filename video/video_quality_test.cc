@@ -1594,7 +1594,7 @@ void VideoQualityTest::RunWithRenderers(const Params& params) {
 
       size_t num_streams_processed = 0;
       for (size_t video_idx = 0; video_idx < num_video_streams_; ++video_idx) {
-        printf("\n  处理第 %zu/%d 个视频流...\n", video_idx+1, num_video_streams_);
+        // printf("\n  处理第 %zu/%d 个视频流...\n", video_idx+1, num_video_streams_);
         
         const size_t selected_stream_id = params_.ss[video_idx].selected_stream;
         const size_t num_streams = params_.ss[video_idx].streams.size();
@@ -1605,10 +1605,10 @@ void VideoQualityTest::RunWithRenderers(const Params& params) {
           for (size_t stream_id = 0; stream_id < num_streams; ++stream_id) {
             rtc::StringBuilder oss;
             oss << "Loopback Video #" << video_idx << " - Stream #" << stream_id;
-            printf("    正在创建渲染器 [%s] 分辨率: %dx%d\n", 
-                   oss.str().c_str(),
-                   params_.ss[video_idx].streams[stream_id].width,
-                   params_.ss[video_idx].streams[stream_id].height);
+            // printf("    正在创建渲染器 [%s] 分辨率: %dx%d\n", 
+            //        oss.str().c_str(),
+            //        params_.ss[video_idx].streams[stream_id].width,
+            //        params_.ss[video_idx].streams[stream_id].height);
 
             loopback_renderers.emplace_back(test::VideoRenderer::Create(
                 oss.str().c_str(),
@@ -1628,10 +1628,10 @@ void VideoQualityTest::RunWithRenderers(const Params& params) {
           printf("    模式：单流处理（仅渲染选定流 %zu）\n", selected_stream_id);
           rtc::StringBuilder oss;
           oss << "Loopback Video #" << video_idx;
-          printf("    正在创建渲染器 [%s] 分辨率: %dx%d\n", 
-                 oss.str().c_str(),
-                 params_.ss[video_idx].streams[selected_stream_id].width,
-                 params_.ss[video_idx].streams[selected_stream_id].height);
+          // printf("    正在创建渲染器 [%s] 分辨率: %dx%d\n", 
+          //        oss.str().c_str(),
+          //        params_.ss[video_idx].streams[selected_stream_id].width,
+          //        params_.ss[video_idx].streams[selected_stream_id].height);
 
           loopback_renderers.emplace_back(test::VideoRenderer::Create(
               oss.str().c_str(),
@@ -1660,7 +1660,7 @@ void VideoQualityTest::RunWithRenderers(const Params& params) {
 
       if (params_.video[0].enabled) {
         printf("\n[本地预览] 创建本地视频预览...\n");
-        printf("  分辨率: %dx%d\n", params_.video[0].width, params_.video[0].height);
+        // printf("  分辨率: %dx%d\n", params_.video[0].width, params_.video[0].height);
         local_preview.reset(test::VideoRenderer::Create(
             "Local Preview", params_.video[0].width, params_.video[0].height));
         video_sources_[0]->AddOrUpdateSink(local_preview.get(), rtc::VideoSinkWants());
